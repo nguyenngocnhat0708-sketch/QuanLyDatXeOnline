@@ -256,7 +256,11 @@ class TripModel {
   static async findTripsList(driverId = null, isAdmin = false) {
     if (db) {
       try {
-        const snapshot = await db.collection('trips').get();
+        let queryRef = db.collection('trips');
+        if (!isAdmin && driverId) {
+          queryRef = queryRef.where('driver.driverId', '==', String(driverId));
+        }
+        const snapshot = await queryRef.get();
         const list = [];
         if (!snapshot.empty) {
           snapshot.forEach(doc => {
