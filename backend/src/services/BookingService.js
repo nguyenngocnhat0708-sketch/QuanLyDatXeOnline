@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
 const TripModel = require('../models/TripModel');
 const UserModel = require('../models/UserModel');
 const BookingModel = require('../models/BookingModel');
@@ -16,9 +16,102 @@ class BookingService {
       throw error;
     }
 
+    const qty = parseInt(seatQuantity, 10);
+
+    // NẾU CHẠY TRÊN MÔI TRƯỜNG FIREBASE FIRESTORE
+    if (db) {
+      const trip = await TripModel.findTripById(tripId);
+      if (!trip) {
+        const error = new Error('Chuyến xe không tồn tại.');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (trip.AvailableSeats < qty) {
+        const error = new Error(`Chỉ còn ${trip.AvailableSeats} ghế trống, không đủ ${qty} ghế yêu cầu.`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      await TripModel.adjustAvailableSeats(trip.TripID, -qty);
+
+      const user = await UserModel.upsertCustomer({
+        fullName: fullName.trim(),
+        phoneNumber: phoneNumber.trim(),
+        email: email.trim().toLowerCase()
+      });
+
+      const randomSuffix = Math.floor(10000 + Math.random() * 90000);
+      const bookingCode = `JS-${randomSuffix}`;
+      const totalAmount = (trip.BasePrice || 150000) * qty;
+      const holdExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      const bookingDoc = {
+        bookingId: 'bk_' + randomSuffix,
+        bookingCode,
+        userId: user.UserID,
+        tripId: trip.TripID,
+        seatQuantity: qty,
+        totalAmount,
+        status: 'Pending',
+        holdExpiresAt,
+        createdAt: new Date().toISOString()
+      };
+      await db.collection('bookings').doc(bookingDoc.bookingId).set(bookingDoc);
+
+      const tickets = [];
+      for (let i = 1; i <= qty; i++) {
+        const ticketCode = `${bookingCode}-${String(i).padStart(2, '0')}`;
+        const confirmationToken = crypto.randomBytes(24).toString('hex');
+        const ticketDoc = {
+          ticketId: `tk_${randomSuffix}_${i}`,
+          bookingId: bookingDoc.bookingId,
+          ticketCode,
+          confirmationToken,
+          status: 'Hold',
+          createdAt: new Date().toISOString()
+        };
+        await db.collection('tickets').doc(ticketDoc.ticketId).set(ticketDoc);
+        tickets.push({
+          TicketID: ticketDoc.ticketId,
+          TicketCode: ticketCode,
+          ConfirmationToken: confirmationToken,
+          Status: 'Hold'
+        });
+      }
+
+      const bankDetails = {
+        bankName: 'MB Bank',
+        accountNo: '0987654321',
+        accountName: 'CONG TY JESOUL BUS',
+        amount: totalAmount,
+        transferContent: bookingCode,
+        qrCodeUrl: `https://api.vietqr.io/image/970422-0987654321-compact.jpg?amount=${totalAmount}&addInfo=${encodeURIComponent(bookingCode)}&accountName=CONG%20TY%20JESOUL%20BUS`
+      };
+
+      const token = AuthService.generateToken(user);
+
+      return {
+        bookingId: bookingDoc.bookingId,
+        bookingCode: bookingDoc.bookingCode,
+        totalAmount: bookingDoc.totalAmount,
+        seatQuantity: bookingDoc.seatQuantity,
+        holdExpiresAt: bookingDoc.holdExpiresAt,
+        remainingSeconds: 600,
+        tickets,
+        bankDetails,
+        token,
+        user: {
+          UserID: user.UserID,
+          Role: user.Role,
+          FullName: user.FullName,
+          PhoneNumber: user.PhoneNumber,
+          Email: user.Email
+        }
+      };
+    }
+
     const pool = getPool();
     const transaction = new sql.Transaction(pool);
-    const qty = parseInt(seatQuantity, 10);
 
     try {
       await transaction.begin();

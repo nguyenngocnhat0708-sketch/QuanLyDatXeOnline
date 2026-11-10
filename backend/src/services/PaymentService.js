@@ -1,10 +1,50 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
 const BookingModel = require('../models/BookingModel');
 const TicketModel = require('../models/TicketModel');
 const PaymentModel = require('../models/PaymentModel');
 
 class PaymentService {
   static async processBankWebhook({ bookingCode, amount, transactionRef, bankName }) {
+    if (db) {
+      const snap = await db.collection('bookings').where('bookingCode', '==', bookingCode).get();
+      if (snap.empty) {
+        const error = new Error(`Mã đơn vé ${bookingCode} không tồn tại.`);
+        error.statusCode = 404;
+        throw error;
+      }
+      const bDoc = snap.docs[0];
+      const booking = bDoc.data();
+      if (booking.status === 'Paid') {
+        return {
+          bookingCode,
+          status: 'Paid',
+          message: 'Đơn đặt vé này đã được thanh toán trước đó.'
+        };
+      }
+
+      await bDoc.ref.update({ status: 'Paid', updatedAt: new Date().toISOString() });
+      await TicketModel.updateStatusByBookingId(bDoc.id, 'Hold', 'Paid');
+
+      const ref = transactionRef || `BANK-TX-${Date.now()}`;
+      const record = await PaymentModel.recordTransaction({
+        bookingId: bDoc.id,
+        paymentMethod: 'BankTransfer',
+        transactionRef: ref,
+        amount: amount || booking.totalAmount,
+        status: 'Success',
+        bankName: bankName || 'MB Bank'
+      });
+
+      return {
+        bookingCode,
+        status: 'Paid',
+        totalAmount: amount || booking.totalAmount,
+        transactionRef: record.TransactionRef,
+        paidAt: record.PaidAt,
+        message: 'Ghi nhận thanh toán chuyển khoản thành công. Đơn vé chuyển sang trạng thái Đã thanh toán.'
+      };
+    }
+
     const pool = getPool();
     const transaction = new sql.Transaction(pool);
 

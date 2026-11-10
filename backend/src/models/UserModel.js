@@ -24,6 +24,7 @@ class UserModel {
       } catch (err) {
         console.error('[UserModel] Lỗi findByPhone từ Firestore:', err.message);
       }
+      return null;
     }
 
     const request = transaction ? new sql.Request(transaction) : getPool().request();
@@ -50,6 +51,7 @@ class UserModel {
       } catch (err) {
         console.error('[UserModel] Lỗi findByPhoneAndRole từ Firestore:', err.message);
       }
+      return null;
     }
 
     const pool = getPool();

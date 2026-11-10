@@ -1,7 +1,25 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
 
 class TicketModel {
   static async createTicket({ bookingId, ticketCode, confirmationToken, status = 'Hold' }, transaction) {
+    if (db) {
+      const ticketDoc = {
+        ticketId: 'tk_' + ticketCode,
+        bookingId,
+        ticketCode,
+        confirmationToken,
+        status,
+        createdAt: new Date().toISOString()
+      };
+      await db.collection('tickets').doc(ticketDoc.ticketId).set(ticketDoc);
+      return {
+        TicketID: ticketDoc.ticketId,
+        TicketCode: ticketCode,
+        ConfirmationToken: confirmationToken,
+        Status: status
+      };
+    }
+
     const request = new sql.Request(transaction);
     request.input('bookingId', sql.Int, bookingId);
     request.input('ticketCode', sql.VarChar, ticketCode);
@@ -17,6 +35,49 @@ class TicketModel {
   }
 
   static async findByCode(ticketCode, transaction = null) {
+    if (db) {
+      try {
+        const snap = await db.collection('tickets').where('ticketCode', '==', ticketCode).get();
+        if (!snap.empty) {
+          const tDoc = snap.docs[0].data();
+          const bSnap = await db.collection('bookings').doc(tDoc.bookingId).get();
+          const bDoc = bSnap.exists ? bSnap.data() : {};
+          const TripModel = require('./TripModel');
+          const UserModel = require('./UserModel');
+          const trip = await TripModel.findTripById(bDoc.tripId);
+          const user = await UserModel.findByPhone(bDoc.userId) || {};
+          return {
+            TicketID: tDoc.ticketId || snap.docs[0].id,
+            TicketCode: tDoc.ticketCode,
+            TicketStatus: tDoc.status,
+            ConfirmationToken: tDoc.confirmationToken,
+            ConfirmedAt: tDoc.confirmedAt,
+            CancelledAt: tDoc.cancelledAt,
+            CancelReason: tDoc.cancelReason,
+            BookingID: bDoc.bookingId,
+            BookingCode: bDoc.bookingCode,
+            TotalAmount: bDoc.totalAmount,
+            SeatQuantity: bDoc.seatQuantity,
+            UserID: bDoc.userId,
+            FullName: user.FullName || '',
+            PhoneNumber: user.PhoneNumber || '',
+            Email: user.Email || '',
+            TripID: trip ? trip.TripID : null,
+            DepartureTime: trip ? trip.DepartureTime : null,
+            ArrivalTime: trip ? trip.ArrivalTime : null,
+            Origin: trip ? trip.Origin : '',
+            Destination: trip ? trip.Destination : '',
+            PlateNumber: trip ? trip.PlateNumber : '',
+            BusType: trip ? trip.BusType : '',
+            DriverName: trip ? trip.DriverName : ''
+          };
+        }
+      } catch (err) {
+        console.error('[TicketModel] Lỗi findByCode Firestore:', err.message);
+      }
+      return null;
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('ticketCode', sql.VarChar, ticketCode);
 
@@ -43,6 +104,43 @@ class TicketModel {
   }
 
   static async findTicketsByUserId(userId) {
+    if (db) {
+      try {
+        const bSnap = await db.collection('bookings').where('userId', '==', userId).get();
+        const list = [];
+        const TripModel = require('./TripModel');
+        for (const bDocSnap of bSnap.docs) {
+          const bDoc = bDocSnap.data();
+          const tSnap = await db.collection('tickets').where('bookingId', '==', bDoc.bookingId).get();
+          const trip = await TripModel.findTripById(bDoc.tripId);
+          tSnap.forEach(doc => {
+            const tDoc = doc.data();
+            list.push({
+              TicketID: tDoc.ticketId || doc.id,
+              TicketCode: tDoc.ticketCode,
+              TicketStatus: tDoc.status,
+              BookingID: bDoc.bookingId,
+              BookingCode: bDoc.bookingCode,
+              TotalAmount: bDoc.totalAmount,
+              SeatQuantity: bDoc.seatQuantity,
+              TripID: trip ? trip.TripID : null,
+              DepartureTime: trip ? trip.DepartureTime : null,
+              ArrivalTime: trip ? trip.ArrivalTime : null,
+              Origin: trip ? trip.Origin : '',
+              Destination: trip ? trip.Destination : '',
+              PlateNumber: trip ? trip.PlateNumber : '',
+              BusType: trip ? trip.BusType : '',
+              DriverName: trip ? trip.DriverName : ''
+            });
+          });
+        }
+        return list;
+      } catch (err) {
+        console.error('[TicketModel] Lỗi findTicketsByUserId Firestore:', err.message);
+        return [];
+      }
+    }
+
     const pool = getPool();
     const request = pool.request();
     request.input('userId', sql.Int, userId);
@@ -88,6 +186,37 @@ class TicketModel {
   }
 
   static async findPassengersByTrip(tripId) {
+    if (db) {
+      try {
+        const bSnap = await db.collection('bookings').where('tripId', 'in', [Number(tripId), String(tripId)]).get();
+        const list = [];
+        const UserModel = require('./UserModel');
+        for (const bDocSnap of bSnap.docs) {
+          const bDoc = bDocSnap.data();
+          const tSnap = await db.collection('tickets').where('bookingId', '==', bDoc.bookingId).get();
+          const user = await UserModel.findByPhone(bDoc.userId) || {};
+          tSnap.forEach(doc => {
+            const tDoc = doc.data();
+            list.push({
+              TicketID: tDoc.ticketId || doc.id,
+              TicketCode: tDoc.ticketCode,
+              TicketStatus: tDoc.status,
+              CancelReason: tDoc.cancelReason,
+              ConfirmedAt: tDoc.confirmedAt,
+              BookingCode: bDoc.bookingCode,
+              PassengerName: user.FullName || 'Khách hàng',
+              PassengerPhone: user.PhoneNumber || '',
+              PassengerEmail: user.Email || ''
+            });
+          });
+        }
+        return list;
+      } catch (err) {
+        console.error('[TicketModel] Lỗi findPassengersByTrip Firestore:', err.message);
+        return [];
+      }
+    }
+
     const pool = getPool();
     const request = pool.request();
     request.input('tripId', sql.Int, tripId);
@@ -109,6 +238,24 @@ class TicketModel {
   }
 
   static async updateStatus(ticketCode, status, reason = null, transaction = null) {
+    if (db) {
+      try {
+        const snap = await db.collection('tickets').where('ticketCode', '==', ticketCode).get();
+        if (!snap.empty) {
+          const data = { status };
+          if (status === 'Confirmed') data.confirmedAt = new Date().toISOString();
+          if (status === 'Cancelled') {
+            data.cancelReason = reason;
+            data.cancelledAt = new Date().toISOString();
+          }
+          await snap.docs[0].ref.update(data);
+        }
+      } catch (err) {
+        console.error('[TicketModel] Lỗi updateStatus Firestore:', err.message);
+      }
+      return;
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('ticketCode', sql.VarChar, ticketCode);
     request.input('status', sql.VarChar, status);
@@ -131,6 +278,20 @@ class TicketModel {
   }
 
   static async updateStatusByBookingId(bookingId, fromStatus, toStatus, transaction = null) {
+    if (db) {
+      try {
+        const snap = await db.collection('tickets').where('bookingId', '==', bookingId).get();
+        for (const doc of snap.docs) {
+          if (!fromStatus || doc.data().status === fromStatus) {
+            await doc.ref.update({ status: toStatus });
+          }
+        }
+      } catch (err) {
+        console.error('[TicketModel] Lỗi updateStatusByBookingId Firestore:', err.message);
+      }
+      return;
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('bookingId', sql.Int, bookingId);
     request.input('fromStatus', sql.VarChar, fromStatus);

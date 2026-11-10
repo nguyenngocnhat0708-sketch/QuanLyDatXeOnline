@@ -1,7 +1,28 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
 
 class PaymentModel {
   static async recordTransaction({ bookingId, paymentMethod = 'BankTransfer', transactionRef, amount, status = 'Success', bankName = 'MB Bank', bankAccountNo = '0987654321' }, transaction = null) {
+    if (db) {
+      const payDoc = {
+        transactionId: 'tx_' + Date.now(),
+        bookingId,
+        paymentMethod,
+        transactionRef,
+        amount,
+        status,
+        bankName,
+        bankAccountNo,
+        paidAt: new Date().toISOString()
+      };
+      await db.collection('payments').doc(payDoc.transactionId).set(payDoc);
+      return {
+        TransactionID: payDoc.transactionId,
+        TransactionRef: transactionRef,
+        Status: status,
+        PaidAt: payDoc.paidAt
+      };
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('bookingId', sql.Int, bookingId);
     request.input('paymentMethod', sql.VarChar, paymentMethod);
