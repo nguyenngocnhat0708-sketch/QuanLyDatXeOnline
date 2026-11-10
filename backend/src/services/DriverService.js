@@ -1,4 +1,4 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
 const TripModel = require('../models/TripModel');
 const TicketModel = require('../models/TicketModel');
 
@@ -46,6 +46,27 @@ class DriverService {
   static async updatePassengerStatus(userParam, ticketCode, status, reason = null) {
     const isAdmin = typeof userParam === 'object' ? userParam.role === 'Admin' : false;
     const driverId = typeof userParam === 'object' ? userParam.userId : userParam;
+
+    if (db) {
+      const ticket = await TicketModel.findByCode(ticketCode);
+      if (!ticket) {
+        const error = new Error('Vé xe không tồn tại.');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      await TicketModel.updateStatus(ticketCode, status, reason);
+      if (status === 'Cancelled') {
+        await TripModel.adjustAvailableSeats(ticket.TripID, 1);
+      }
+
+      return {
+        ticketCode,
+        status,
+        updatedAt: new Date().toISOString()
+      };
+    }
+
     const pool = getPool();
     const transaction = new sql.Transaction(pool);
 

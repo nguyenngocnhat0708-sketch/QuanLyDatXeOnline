@@ -1,4 +1,4 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
 const TicketModel = require('../models/TicketModel');
 const TripModel = require('../models/TripModel');
 const EmailLogModel = require('../models/EmailLogModel');
@@ -44,6 +44,36 @@ class TicketService {
       const error = new Error('Thao tác hủy vé tự phục vụ chỉ dành cho khách hàng sở hữu vé.');
       error.statusCode = 403;
       throw error;
+    }
+
+    if (db) {
+      const ticket = await TicketModel.findByCode(ticketCode);
+      if (!ticket) {
+        const error = new Error('Vé xe không tồn tại.');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (ticket.UserID !== user.userId && ticket.PhoneNumber !== user.phoneNumber) {
+        const error = new Error('Bạn không phải là chủ sở hữu chiếc vé này nên không có quyền hủy.');
+        error.statusCode = 403;
+        throw error;
+      }
+
+      if (ticket.TicketStatus === 'Cancelled') {
+        const error = new Error('Vé này đã được hủy trước đó.');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      await TicketModel.updateStatus(ticketCode, 'Cancelled', 'Khách hàng chủ động hủy trên Website');
+      await TripModel.adjustAvailableSeats(ticket.TripID, 1);
+
+      return {
+        ticketCode,
+        status: 'Cancelled',
+        refundPolicy: 'Không hoàn tiền theo chính sách quy định của JESOUL.'
+      };
     }
 
     const pool = getPool();
