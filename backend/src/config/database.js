@@ -1,7 +1,8 @@
 // backend/src/config/database.js
 const sql = require('mssql');
 const config = require('./environment');
-const admin = require('firebase-admin');
+const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
 const path = require('path');
 const fs = require('fs');
 
@@ -47,23 +48,33 @@ try {
 
   // Cách 1: Đọc từ biến môi trường FIREBASE_CONFIG_JSON trên Render (Tiện lợi nhất)
   if (process.env.FIREBASE_CONFIG_JSON) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
+    try {
+      serviceAccount = typeof process.env.FIREBASE_CONFIG_JSON === 'string'
+        ? JSON.parse(process.env.FIREBASE_CONFIG_JSON)
+        : process.env.FIREBASE_CONFIG_JSON;
+    } catch (parseErr) {
+      console.error('[Firebase] Lỗi đọc JSON từ FIREBASE_CONFIG_JSON:', parseErr.message);
+    }
   }
   // Cách 2: Đọc từ file vật lý cục bộ hoặc Secret File Render
   else if (fs.existsSync(secretPath)) {
     serviceAccount = require(secretPath);
+  } else if (fs.existsSync(path.join(__dirname, '../../serviceAccountKey.json'))) {
+    serviceAccount = require(path.join(__dirname, '../../serviceAccountKey.json'));
+  } else if (fs.existsSync(path.resolve(process.cwd(), 'serviceAccountKey.json'))) {
+    serviceAccount = require(path.resolve(process.cwd(), 'serviceAccountKey.json'));
   } else if (fs.existsSync('/etc/secrets/serviceAccountKey.json')) {
     serviceAccount = require('/etc/secrets/serviceAccountKey.json');
   }
 
   if (serviceAccount) {
-    const existingApps = (typeof admin.getApps === 'function' ? admin.getApps() : admin.apps) || [];
+    const existingApps = getApps();
     if (existingApps.length === 0) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
+      initializeApp({
+        credential: cert(serviceAccount)
       });
     }
-    db = admin.firestore();
+    db = getFirestore();
     console.log('[Firebase] Đã khởi tạo kết nối Cloud Firestore thành công.');
   } else {
     console.warn('[Firebase] Chưa tìm thấy cấu hình Firebase (FIREBASE_CONFIG_JSON hoặc serviceAccountKey.json).');
@@ -81,7 +92,6 @@ module.exports = {
   connectDatabase,
   getPool,
   // Xuất Firebase cho các chức năng đám mây
-  admin,
   db
 };
 
