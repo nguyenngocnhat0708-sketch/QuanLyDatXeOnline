@@ -48,7 +48,7 @@ class BookingModel {
           const TripModel = require('./TripModel');
           const UserModel = require('./UserModel');
           const trip = await TripModel.findTripById(bDoc.tripId);
-          const user = (await UserModel.findByPhone(bDoc.userId)) || {};
+          const user = (await UserModel.findById(bDoc.userId)) || (await UserModel.findByPhone(bDoc.userId)) || {};
           return {
             BookingID: bDoc.bookingId || snap.docs[0].id,
             BookingCode: bDoc.bookingCode,

@@ -14,6 +14,35 @@ function mapFirestoreUser(doc) {
 }
 
 class UserModel {
+  static async findById(userId) {
+    if (db) {
+      try {
+        const docRef = db.collection('users').doc(String(userId));
+        const snap = await docRef.get();
+        if (snap.exists) {
+          return mapFirestoreUser(snap);
+        }
+        const q = await db.collection('users').where('userId', '==', String(userId)).get();
+        if (!q.empty) {
+          return mapFirestoreUser(q.docs[0]);
+        }
+      } catch (err) {
+        console.error('[UserModel] Lỗi findById từ Firestore:', err.message);
+      }
+      return null;
+    }
+
+    const pool = getPool();
+    const request = pool.request();
+    request.input('userId', sql.Int, userId);
+    const result = await request.query(`
+      SELECT UserID, Role, FullName, PhoneNumber, Email, PasswordHash, CreatedAt
+      FROM dbo.Users
+      WHERE UserID = @userId;
+    `);
+    return result.recordset[0] || null;
+  }
+
   static async findByPhone(phoneNumber, transaction = null) {
     if (db) {
       try {
