@@ -38,7 +38,8 @@ class TripModel {
             }
             if (departureDate && t.DepartureTime) {
               const tripDate = t.DepartureTime.substring(0, 10);
-              if (tripDate !== departureDate) {
+              const filterDate = String(departureDate).substring(0, 10);
+              if (tripDate !== filterDate) {
                 matches = false;
               }
             }
