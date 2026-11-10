@@ -1,7 +1,59 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
+
+function mapFirestoreTrip(doc) {
+  const data = doc.data ? doc.data() : doc;
+  return {
+    TripID: data.TripID || data.tripId || (typeof doc.id === 'string' ? doc.id.replace('trip_', '') : 1),
+    Origin: data.Origin || data.route?.origin || 'Bình Định',
+    Destination: data.Destination || data.route?.destination || 'Quy Nhơn',
+    DepartureTime: data.DepartureTime || data.departureTime || new Date(Date.now() + 86400000).toISOString(),
+    ArrivalTime: data.ArrivalTime || data.arrivalTime || new Date(Date.now() + 90000000).toISOString(),
+    BasePrice: data.BasePrice || data.basePrice || 150000,
+    AvailableSeats: data.AvailableSeats !== undefined ? data.AvailableSeats : (data.availableSeats !== undefined ? data.availableSeats : 16),
+    PlateNumber: data.PlateNumber || data.bus?.plateNumber || '77B-123.45',
+    BusType: data.BusType || data.bus?.busType || 'Limousine VIP',
+    TotalSeats: data.TotalSeats || data.bus?.totalSeats || 16,
+    DriverName: data.DriverName || data.driver?.driverName || 'Tài xế JESOUL',
+    Status: data.Status || data.status || 'Scheduled'
+  };
+}
 
 class TripModel {
   static async searchAvailableTrips({ origin, destination, seatQuantity = 1, departureDate = null }) {
+    // Nếu có kết nối Firebase Firestore
+    if (db) {
+      try {
+        const snapshot = await db.collection('trips').get();
+        if (!snapshot.empty) {
+          const list = [];
+          snapshot.forEach(doc => {
+            const t = mapFirestoreTrip(doc);
+            let matches = (t.Status === 'Scheduled') && (t.AvailableSeats >= seatQuantity);
+
+            if (origin && !t.Origin.toLowerCase().includes(origin.toLowerCase())) {
+              matches = false;
+            }
+            if (destination && !t.Destination.toLowerCase().includes(destination.toLowerCase())) {
+              matches = false;
+            }
+            if (departureDate && t.DepartureTime) {
+              const tripDate = t.DepartureTime.substring(0, 10);
+              if (tripDate !== departureDate) {
+                matches = false;
+              }
+            }
+
+            if (matches) list.push(t);
+          });
+          list.sort((a, b) => new Date(a.DepartureTime) - new Date(b.DepartureTime));
+          return list;
+        }
+      } catch (err) {
+        console.error('[TripModel] Lỗi đọc trips từ Firestore:', err.message);
+      }
+    }
+
+    // Fallback sang SQL Server nếu chạy cục bộ
     const pool = getPool();
     const request = pool.request();
     request.input('seatQuantity', sql.Int, seatQuantity);
@@ -110,6 +162,23 @@ class TripModel {
   }
 
   static async findTripById(tripId, transaction = null) {
+    if (db) {
+      try {
+        const docRef = db.collection('trips').doc(String(tripId));
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          return mapFirestoreTrip(docSnap);
+        }
+        const docRefPrefixed = db.collection('trips').doc(`trip_${tripId}`);
+        const docSnapPrefixed = await docRefPrefixed.get();
+        if (docSnapPrefixed.exists) {
+          return mapFirestoreTrip(docSnapPrefixed);
+        }
+      } catch (err) {
+        console.error('[TripModel] Lỗi findTripById từ Firestore:', err.message);
+      }
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('tripId', sql.Int, tripId);
     const result = await request.query(`
@@ -125,6 +194,10 @@ class TripModel {
   }
 
   static async findTripByIdAndDriver(tripId, driverId, transaction = null) {
+    if (db) {
+      return this.findTripById(tripId);
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('tripId', sql.Int, tripId);
     request.input('driverId', sql.Int, driverId);
@@ -142,6 +215,24 @@ class TripModel {
   }
 
   static async findTripsList(driverId = null, isAdmin = false) {
+    if (db) {
+      try {
+        const snapshot = await db.collection('trips').get();
+        if (!snapshot.empty) {
+          const list = [];
+          snapshot.forEach(doc => {
+            const t = mapFirestoreTrip(doc);
+            t.PassengerCount = doc.data().passengerCount || 0;
+            list.push(t);
+          });
+          list.sort((a, b) => new Date(a.DepartureTime) - new Date(b.DepartureTime));
+          return list;
+        }
+      } catch (err) {
+        console.error('[TripModel] Lỗi findTripsList từ Firestore:', err.message);
+      }
+    }
+
     const pool = getPool();
     const request = pool.request();
     let query = `

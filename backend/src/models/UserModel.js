@@ -1,7 +1,31 @@
-const { getPool, sql } = require('../config/database');
+const { getPool, sql, db } = require('../config/database');
+
+function mapFirestoreUser(doc) {
+  const data = doc.data ? doc.data() : doc;
+  return {
+    UserID: data.UserID || data.userId || (doc.id ? doc.id : 'usr_1'),
+    Role: data.Role || data.role || 'Customer',
+    FullName: data.FullName || data.fullName || '',
+    PhoneNumber: data.PhoneNumber || data.phoneNumber || '',
+    Email: data.Email || data.email || '',
+    PasswordHash: data.PasswordHash || data.passwordHash || '',
+    CreatedAt: data.CreatedAt || data.createdAt || new Date().toISOString()
+  };
+}
 
 class UserModel {
   static async findByPhone(phoneNumber, transaction = null) {
+    if (db) {
+      try {
+        const snap = await db.collection('users').where('phoneNumber', '==', phoneNumber).get();
+        if (!snap.empty) {
+          return mapFirestoreUser(snap.docs[0]);
+        }
+      } catch (err) {
+        console.error('[UserModel] Lỗi findByPhone từ Firestore:', err.message);
+      }
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('phoneNumber', sql.VarChar, phoneNumber);
 
@@ -14,6 +38,20 @@ class UserModel {
   }
 
   static async findByPhoneAndRole(phoneNumber, role) {
+    if (db) {
+      try {
+        const snap = await db.collection('users')
+          .where('phoneNumber', '==', phoneNumber)
+          .where('role', '==', role)
+          .get();
+        if (!snap.empty) {
+          return mapFirestoreUser(snap.docs[0]);
+        }
+      } catch (err) {
+        console.error('[UserModel] Lỗi findByPhoneAndRole từ Firestore:', err.message);
+      }
+    }
+
     const pool = getPool();
     const request = pool.request();
     request.input('phoneNumber', sql.VarChar, phoneNumber);
@@ -28,6 +66,32 @@ class UserModel {
   }
 
   static async upsertCustomer({ fullName, phoneNumber, email }, transaction = null) {
+    if (db) {
+      try {
+        const snap = await db.collection('users').where('phoneNumber', '==', phoneNumber).get();
+        if (!snap.empty) {
+          const docRef = snap.docs[0].ref;
+          await docRef.update({ fullName, email, updatedAt: new Date().toISOString() });
+          const updated = await docRef.get();
+          return mapFirestoreUser(updated);
+        } else {
+          const newUser = {
+            userId: 'usr_' + Date.now(),
+            role: 'Customer',
+            fullName,
+            phoneNumber,
+            email,
+            createdAt: new Date().toISOString()
+          };
+          const ref = await db.collection('users').add(newUser);
+          newUser.UserID = ref.id;
+          return mapFirestoreUser(newUser);
+        }
+      } catch (err) {
+        console.error('[UserModel] Lỗi upsertCustomer trên Firestore:', err.message);
+      }
+    }
+
     const request = transaction ? new sql.Request(transaction) : getPool().request();
     request.input('role', sql.VarChar, 'Customer');
     request.input('fullName', sql.NVarChar, fullName);
