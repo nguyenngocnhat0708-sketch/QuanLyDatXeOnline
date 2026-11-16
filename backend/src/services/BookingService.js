@@ -49,6 +49,9 @@ class BookingService {
         bookingId: 'bk_' + randomSuffix,
         bookingCode,
         userId: user.UserID,
+        customerName: fullName.trim(),
+        customerPhone: phoneNumber.trim(),
+        customerEmail: email.trim().toLowerCase(),
         tripId: trip.TripID,
         seatQuantity: qty,
         totalAmount,
@@ -67,6 +70,9 @@ class BookingService {
           bookingId: bookingDoc.bookingId,
           ticketCode,
           confirmationToken,
+          customerName: fullName.trim(),
+          customerPhone: phoneNumber.trim(),
+          customerEmail: email.trim().toLowerCase(),
           status: 'Hold',
           createdAt: new Date().toISOString()
         };

@@ -132,7 +132,12 @@ class TripModel {
         }
         if (snap.exists) {
           const cur = snap.data().availableSeats ?? snap.data().AvailableSeats ?? 16;
-          await docRef.update({ availableSeats: cur + delta });
+          const curPassengers = snap.data().passengerCount || 0;
+          const newPassengers = Math.max(0, curPassengers - delta);
+          await docRef.update({ 
+            availableSeats: cur + delta,
+            passengerCount: newPassengers
+          });
         }
       } catch (err) {
         console.error('[TripModel] Lỗi adjustAvailableSeats Firestore:', err.message);
@@ -263,9 +268,27 @@ class TripModel {
         const snapshot = await queryRef.get();
         const list = [];
         if (!snapshot.empty) {
+          // Pre-calculate real-time active passenger counts per trip
+          const bSnap = await db.collection('bookings').get();
+          const bookingTripMap = {};
+          bSnap.forEach(b => {
+            bookingTripMap[b.id] = String(b.data().tripId);
+          });
+
+          const tSnap = await db.collection('tickets').where('status', 'in', ['Paid', 'Confirmed', 'NoReply', 'Hold']).get();
+          const tripCountMap = {};
+          tSnap.forEach(t => {
+            const data = t.data();
+            const tid = bookingTripMap[data.bookingId];
+            if (tid) {
+              tripCountMap[tid] = (tripCountMap[tid] || 0) + 1;
+            }
+          });
+
           snapshot.forEach(doc => {
             const t = mapFirestoreTrip(doc);
-            t.PassengerCount = doc.data().passengerCount || 0;
+            const strId = String(t.TripID);
+            t.PassengerCount = tripCountMap[strId] || doc.data().passengerCount || 0;
             list.push(t);
           });
           list.sort((a, b) => new Date(a.DepartureTime) - new Date(b.DepartureTime));

@@ -40,12 +40,20 @@ class TicketModel {
         const snap = await db.collection('tickets').where('ticketCode', '==', ticketCode).get();
         if (!snap.empty) {
           const tDoc = snap.docs[0].data();
-          const bSnap = await db.collection('bookings').doc(tDoc.bookingId).get();
-          const bDoc = bSnap.exists ? bSnap.data() : {};
+          let bDoc = {};
+          if (tDoc.bookingId) {
+            const bSnap = await db.collection('bookings').doc(tDoc.bookingId).get();
+            if (bSnap.exists) {
+              bDoc = bSnap.data();
+            } else {
+              const bQuery = await db.collection('bookings').where('bookingCode', '==', tDoc.bookingId).get();
+              if (!bQuery.empty) bDoc = bQuery.docs[0].data();
+            }
+          }
           const TripModel = require('./TripModel');
           const UserModel = require('./UserModel');
           const trip = await TripModel.findTripById(bDoc.tripId);
-          const user = await UserModel.findByPhone(bDoc.userId) || {};
+          const user = (await UserModel.findById(bDoc.userId)) || (await UserModel.findByPhone(bDoc.userId)) || {};
           return {
             TicketID: tDoc.ticketId || snap.docs[0].id,
             TicketCode: tDoc.ticketCode,
@@ -59,9 +67,9 @@ class TicketModel {
             TotalAmount: bDoc.totalAmount,
             SeatQuantity: bDoc.seatQuantity,
             UserID: bDoc.userId,
-            FullName: user.FullName || '',
-            PhoneNumber: user.PhoneNumber || '',
-            Email: user.Email || '',
+            FullName: tDoc.customerName || bDoc.customerName || user.FullName || '',
+            PhoneNumber: tDoc.customerPhone || bDoc.customerPhone || user.PhoneNumber || '',
+            Email: tDoc.customerEmail || bDoc.customerEmail || user.Email || '',
             TripID: trip ? trip.TripID : null,
             DepartureTime: trip ? trip.DepartureTime : null,
             ArrivalTime: trip ? trip.ArrivalTime : null,
@@ -106,11 +114,31 @@ class TicketModel {
   static async findTicketsByUserId(userId) {
     if (db) {
       try {
-        const bSnap = await db.collection('bookings').where('userId', '==', userId).get();
+        const UserModel = require('./UserModel');
+        const user = (await UserModel.findById(userId)) || (await UserModel.findByPhone(userId));
+        const searchIds = [String(userId)];
+        if (user) {
+          if (user.UserID) searchIds.push(String(user.UserID));
+          if (user.PhoneNumber) searchIds.push(String(user.PhoneNumber));
+        }
+        const uniqueIds = Array.from(new Set(searchIds));
+
+        let bookings = [];
+        const bSnap = await db.collection('bookings').where('userId', 'in', uniqueIds).get();
+        bSnap.forEach(d => bookings.push(d.data()));
+
+        if (user && user.PhoneNumber) {
+          const bPhoneSnap = await db.collection('bookings').where('customerPhone', '==', user.PhoneNumber).get();
+          bPhoneSnap.forEach(d => {
+            if (!bookings.some(b => b.bookingId === d.data().bookingId)) {
+              bookings.push(d.data());
+            }
+          });
+        }
+
         const list = [];
         const TripModel = require('./TripModel');
-        for (const bDocSnap of bSnap.docs) {
-          const bDoc = bDocSnap.data();
+        for (const bDoc of bookings) {
           const tSnap = await db.collection('tickets').where('bookingId', '==', bDoc.bookingId).get();
           const trip = await TripModel.findTripById(bDoc.tripId);
           tSnap.forEach(doc => {
@@ -188,13 +216,23 @@ class TicketModel {
   static async findPassengersByTrip(tripId) {
     if (db) {
       try {
-        const bSnap = await db.collection('bookings').where('tripId', 'in', [Number(tripId), String(tripId)]).get();
+        const tripNum = Number(tripId);
+        const tripStr = String(tripId);
+        const tripPrefixed = tripStr.startsWith('trip_') ? tripStr : `trip_${tripStr}`;
+        const tripUnprefixed = tripStr.replace('trip_', '');
+        const searchIds = Array.from(new Set([tripNum, tripStr, tripPrefixed, Number(tripUnprefixed)]));
+
+        const bSnap = await db.collection('bookings').where('tripId', 'in', searchIds).get();
         const list = [];
         const UserModel = require('./UserModel');
         for (const bDocSnap of bSnap.docs) {
           const bDoc = bDocSnap.data();
           const tSnap = await db.collection('tickets').where('bookingId', '==', bDoc.bookingId).get();
-          const user = await UserModel.findByPhone(bDoc.userId) || {};
+          const user = (await UserModel.findById(bDoc.userId)) || (await UserModel.findByPhone(bDoc.userId)) || {};
+          const passengerName = bDoc.customerName || user.FullName || 'Khách hàng';
+          const passengerPhone = bDoc.customerPhone || user.PhoneNumber || '';
+          const passengerEmail = bDoc.customerEmail || user.Email || '';
+
           tSnap.forEach(doc => {
             const tDoc = doc.data();
             list.push({
@@ -204,9 +242,9 @@ class TicketModel {
               CancelReason: tDoc.cancelReason,
               ConfirmedAt: tDoc.confirmedAt,
               BookingCode: bDoc.bookingCode,
-              PassengerName: user.FullName || 'Khách hàng',
-              PassengerPhone: user.PhoneNumber || '',
-              PassengerEmail: user.Email || ''
+              PassengerName: tDoc.customerName || passengerName,
+              PassengerPhone: tDoc.customerPhone || passengerPhone,
+              PassengerEmail: tDoc.customerEmail || passengerEmail
             });
           });
         }

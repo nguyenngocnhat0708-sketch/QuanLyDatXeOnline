@@ -19,10 +19,12 @@ class DriverService {
     }
 
     // Nếu không chỉ định tripId cụ thể:
-    // Tự động chọn chuyến có khách đặt vé gần đây nhất hoặc chuyến đầu tiên
+    // Tự động chọn chuyến có khách đặt vé trong tương lai/gần nhất, hoặc chuyến đầu tiên có khách
     if (!trip) {
-      const tripWithPassengers = tripsList.find(t => t.PassengerCount > 0);
-      trip = tripWithPassengers || tripsList[0] || null;
+      const nowStr = new Date().toISOString();
+      const upcomingWithPassengers = tripsList.find(t => t.PassengerCount > 0 && t.DepartureTime >= nowStr);
+      const anyWithPassengers = tripsList.find(t => t.PassengerCount > 0);
+      trip = upcomingWithPassengers || anyWithPassengers || tripsList[0] || null;
     }
 
     if (!trip) {
